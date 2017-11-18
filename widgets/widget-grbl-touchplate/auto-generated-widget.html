@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+
+    <title>Widget / GRBL Touch Plate</title>
+
+    <!-- ChiliPeppr is based on bootstrap CSS. -->
+    <link rel="stylesheet" type="text/css" href="//netdna.bootstrapcdn.com/bootstrap/3.1.1/css/bootstrap.min.css">
+
+    <!-- Customized version of require.js for ChiliPeppr. Please see require.js docs for how
+    ChiliPeppr's dependency system works as it's based on require.js. -->
+    <script type='text/javascript' src="//i2dcui.appspot.com/js/require.js"></script>
+
+    <style type='text/css'>
+/* CSS for ChiliPeppr Widget */
+
+#com-chilipeppr-widget-touchplate .panel-body {
+    padding:0;
+    position:relative;
+
+    margin: 10px 20px 10px 20px;
+}
+#com-chilipeppr-widget-touchplate .settings-overlay {
+    /*position:absolute;
+    top:20px;
+    left:40%;
+    bottom:10px;
+    right:10px;
+    border:0px solid red;*/
+}
+#com-chilipeppr-widget-touchplate .input-group-addon {
+    font-size:10px;
+}
+#com-chilipeppr-widget-touchplate .panel-footer {
+    font-size:11px;
+    padding:0;
+    margin:0;
+}
+#com-chilipeppr-widget-touchplate-status {
+    /*overflow: auto;
+    max-height:30px;*/
+    background:none;
+    background-color:#f5f5f5;
+    border:none;
+}
+
+    </style>
+
+    <script type='text/javascript'>
+    //<![CDATA[
+requirejs.config({
+    paths: {
+        Three: '//threejs.org/build/three.min'
+    }
+});
+
+// Test this element. This code is auto-removed by the chilipeppr.load()
+cprequire_test(["inline:com-chilipeppr-widget-touchplate"], function (touchplate) {
+    console.log("test running of " + touchplate.id);
+    touchplate.init();
+    $('body').css('padding', '20px');
+} /*end_test*/ );
+
+cpdefine("inline:com-chilipeppr-widget-touchplate", ["chilipeppr_ready", 'Three'], function () {
+    return {
+        id: "com-chilipeppr-widget-touchplate",
+        url: "http://raw.githubusercontent.com/johnlauer/widget-grbl-touchplate/master/auto-generated-widget.html",       // The final URL of the working widget as a single HTML file with CSS and Javascript inlined. You can let runme.js auto fill this if you are using Cloud9.
+        fiddleurl: "http://ide.c9.io/johnlauer/widget-grbl-touchplate", // The edit URL. This can be auto-filled by runme.js in Cloud9 if you'd like, or just define it on your own to help people know where they can edit/fork your widget
+        githuburl: "https://github.com/johnlauer/widget-grbl-touchplate", // The backing github repo
+        testurl: "http://widget-grbl-touchplate-johnlauer.c9users.io/widget.html",   // The standalone working widget so can view it working by itself
+        
+        name: "Widget / GRBL Touch Plate",
+        desc: "This widget helps you use a touch plate to create your Z zero offset.",
+        publish: {
+        },
+        subscribe: {
+        },
+        foreignPublish: {
+        },
+        foreignSubscribe: {
+        },
+        isInitted: false, // keep track of our one-time init
+        offset: 0,
+        width: 400,
+        height: 500,
+        init: function () {
+
+            this.setupUiFromLocalStorage();
+            this.btnSetup();
+
+            this.forkSetup();
+            
+            this.isInitted = true;
+            console.log(this.name + " done loading.");
+        },
+
+        gcodeCtr: 0,
+        isRunning: false,
+        onRun: function(evt) {
+            // when user clicks the run button
+            console.log("user clicked run button. evt:", evt);
+            
+            if (this.isRunning) {
+                // we need to stop
+                // swap button to stop
+                $('#com-chilipeppr-widget-touchplate .btn-touchplaterun').removeClass("btn-danger").text("Run");
+                this.isRunning = false;
+                
+            } else {
+                
+                // we need to run the whole darn process
+                this.isRunning = true;
+                // swap button to stop
+                $('#com-chilipeppr-widget-touchplate .btn-touchplaterun').addClass("btn-danger").text("Stop");
+                
+                // get user feedrate
+                var fr = $('#com-chilipeppr-widget-touchplate .frprobe').val();
+                //get user depth
+                var depth = $('#com-chilipeppr-widget-touchplate .depthprobe').val();
+                //set plate offset for use in probe response
+                this.offset = $('#com-chilipeppr-widget-touchplate .heightplate').val();
+                
+                // now start watching for cnc widget response
+                chilipeppr.subscribe("/com-chilipeppr-interface-cnccontroller/proberesponse", this, this.probeResponse,1);
+                
+                // send the probe command to start the movement
+                var id = "tp" + this.gcodeCtr++;
+                var gcode = "G21 G90 (Use mm and abs coords)\n";
+                chilipeppr.publish("/com-chilipeppr-widget-serialport/jsonSend", {Id: id, D: gcode});
+                
+                //Clear any previous tool offsets
+                id = "tp" + this.gcodeCtr++;
+                gcode = "G49\n";
+                chilipeppr.publish("/com-chilipeppr-widget-serialport/jsonSend", {Id: id, D: gcode});
+                
+                //Zero out z axis in case user has not, or incase removing preious tool offset has changed Z zero position.
+                id = "tp" + this.gcodeCtr++;
+                gcode = "G92 Z0\n";
+                chilipeppr.publish("/com-chilipeppr-widget-serialport/jsonSend", {Id: id, D: gcode});
+                
+                //send probe command
+                id = "tp" + this.gcodeCtr++;
+                gcode = "G38.2 Z"+ depth + " F" + fr + "\n";
+                chilipeppr.publish("/com-chilipeppr-widget-serialport/jsonSend", {Id: id, D: gcode});
+            }
+        },
+        probeResponse: function(position) {
+            if(position === "alarm" || position.status === "0"){
+                console.log("Touchplate: PROBE Failure");
+                // swap button to stop
+                $('#com-chilipeppr-widget-touchplate .btn-touchplaterun').addClass("btn-danger").text("Alarm!!");
+                return false;
+            }
+    
+            console.log("Touchplate: Probe responded with Z position: " + position.z);
+            console.log("Touchplate: G43.1 tool offset to: " + (position.z - this.offset).toString());
+            
+            var id = "tp" + this.gcodeCtr++;
+            var gcode = "G43.1 Z" + (position.z - this.offset).toString() + "\n";
+            chilipeppr.publish("/com-chilipeppr-widget-serialport/jsonSend", {Id: id, D: gcode});
+            
+            //now back off 2 mm to allow touch plate removal
+            
+            id = "tp" + this.gcodeCtr++;
+            gcode = "G91 G0 Z2\n"
+            chilipeppr.publish("/com-chilipeppr-widget-serialport/jsonSend", {Id: id, D: gcode});
+            
+            id = "tp" + this.gcodeCtr++;
+            gcode = "G90\n"
+            chilipeppr.publish("/com-chilipeppr-widget-serialport/jsonSend", {Id: id, D: gcode});
+            
+            // switch stop button back to "run"
+            $('#com-chilipeppr-widget-touchplate .btn-touchplaterun').removeClass("btn-danger").text("Run");
+            
+            //unsubscribe now that we have our probe response
+            chilipeppr.unsubscribe("/com-chilipeppr-interface-cnccontroller/proberesponse", this.probeResponse);
+            this.offset = 0; //set offset back to zero for next run (should user change, we want to capture that
+            return false;
+        },
+        
+        onresize: function() {
+            this.width = $('#com-chilipeppr-widget-touchplate .panel-body').width();
+            this.setSize(this.width, this.height);
+        },
+        dispatch: function ( array, event ) {
+
+            for ( var i = 0, l = array.length; i < l; i ++ ) {
+
+                array[ i ]( event );
+
+            }
+
+        },
+        request: null,
+        isHidden: false,
+        unactivateWidget: function() {
+            if (!this.isHidden) {
+                // unsubscribe from everything
+                console.log("unactivateWidget. unsubscribing.");
+                //chilipeppr.unsubscribe("/com-chilipeppr-interface-cnccontroller/axes", this, this.onAxes);
+                //chilipeppr.unsubscribe("/com-chilipeppr-widget-serialport/ws/recv", this, this.onWsRecvLaser);
+                this.isHidden = true;
+            }
+        },
+        activateWidget: function() {
+            if (!this.isInitted) {
+                this.init();
+            }
+            if (this.isHidden) {
+                // resubscribe
+                console.log("activateWidget. resubscribing.");
+                //chilipeppr.subscribe("/com-chilipeppr-interface-cnccontroller/axes", this, this.onAxes);
+                //chilipeppr.subscribe("/com-chilipeppr-widget-serialport/ws/recv", this, this.onWsRecvLaser);
+                this.isHidden = false;
+            }
+        },
+        options: null,
+        setupUiFromLocalStorage: function() {
+            // read vals from cookies
+            var options = localStorage.getItem('com-chilipeppr-widget-touchplate-options');
+            
+            if (options) {
+                options = $.parseJSON(options);
+                console.log("just evaled options: ", options);
+            } else {
+                options = {
+                    showBody: true,
+                    frprobe: 50,
+                    heightplate: 3.75,
+                    depthprobe: -10
+                };
+            }
+            
+            // check z
+            //if (!('z' in options)) options.z = 1.0;
+            
+            this.options = options;
+            console.log("options:", options);
+            
+            // show/hide body
+            if (options.showBody) {
+                this.showBody();
+            } else {
+                this.hideBody();
+            }
+            
+            // setup textboxes
+            $('#com-chilipeppr-widget-touchplate .frprobe').val(this.options.frprobe);
+            $('#com-chilipeppr-widget-touchplate .heightplate').val(this.options.heightplate);
+            $('#com-chilipeppr-widget-touchplate .depthprobe').val(this.options.depthprobe);
+            
+            // attach onchange
+            $('#com-chilipeppr-widget-touchplate input').change(this.saveOptionsLocalStorage.bind(this));           
+        },
+        saveOptionsLocalStorage: function() {
+            //var options = {
+            //    showBody: this.options.showBody
+            //};
+            
+            // grab text vals
+            this.options.frprobe = $('#com-chilipeppr-widget-touchplate .frprobe').val();
+            this.options.heightplate = $('#com-chilipeppr-widget-touchplate .heightplate').val();
+            this.options.depthprobe = $('#com-chilipeppr-widget-touchplate .depthprobe').val();
+            
+            var options = this.options;
+                
+            var optionsStr = JSON.stringify(options);
+            console.log("saving options:", options, "json.stringify:", optionsStr);
+            // store cookie
+            localStorage.setItem('com-chilipeppr-widget-touchplate-options', optionsStr);
+        },
+        showBody: function(evt) {
+            $('#com-chilipeppr-widget-touchplate .panel-body').removeClass('hidden');
+            //$('#com-chilipeppr-widget-touchplate .panel-footer').removeClass('hidden');
+            $('#com-chilipeppr-widget-touchplate .hidebody span').addClass('glyphicon-chevron-up');
+            $('#com-chilipeppr-widget-touchplate .hidebody span').removeClass('glyphicon-chevron-down');
+            if ((evt !== null)) {
+                this.options.showBody = true;
+                this.saveOptionsLocalStorage();
+            }
+        },
+        hideBody: function(evt) {
+            $('#com-chilipeppr-widget-touchplate .panel-body').addClass('hidden');
+            //$('#com-chilipeppr-widget-touchplate .panel-footer').addClass('hidden');
+            $('#com-chilipeppr-widget-touchplate .hidebody span').removeClass('glyphicon-chevron-up');
+            $('#com-chilipeppr-widget-touchplate .hidebody span').addClass('glyphicon-chevron-down');
+            if ((evt !== null)) {
+                this.options.showBody = false;
+                this.saveOptionsLocalStorage();
+            }
+        },
+        btnSetup: function() {
+            
+            // chevron hide body
+            var that = this;
+            $('#com-chilipeppr-widget-touchplate .hidebody').click(function(evt) {
+                console.log("hide/unhide body");
+                if ($('#com-chilipeppr-widget-touchplate .panel-body').hasClass('hidden')) {
+                    // it's hidden, unhide
+                    that.showBody(evt);
+                } else {
+                    // hide
+                    that.hideBody(evt);
+                }
+            });
+            
+            $('#com-chilipeppr-widget-touchplate .btn-toolbar .btn').popover({
+                delay: 500,
+                animation: true,
+                placement: "auto",
+                trigger: "hover",
+                container: 'body'
+            });
+            
+            // setup run button
+            $('#com-chilipeppr-widget-touchplate .btn-touchplaterun').click(this.onRun.bind(this));
+            
+            
+        },
+        statusEl: null, // cache the status element in DOM
+        status: function(txt) {
+            console.log("status. txt:", txt);
+            if (this.statusEl === null) this.statusEl = $('#com-chilipeppr-widget-touchplate-status');
+            var len = this.statusEl.val().length;
+            if (len > 30000) {
+                console.log("truncating status area text");
+                this.statusEl.val(this.statusEl.val().substring(len-5000));
+            }
+            this.statusEl.val(this.statusEl.val() + txt + "\n");
+            this.statusEl.scrollTop(
+                this.statusEl[0].scrollHeight - this.statusEl.height()
+            );
+        },
+        forkSetup: function() {
+            var topCssSelector = '#' + this.id;
+
+            $(topCssSelector + ' .panel-title').popover({
+                title: this.name,
+                content: this.desc,
+                html: true,
+                delay: 1000,
+                animation: true,
+                trigger: 'hover',
+                placement: 'auto'
+            });
+
+            var that = this;
+            chilipeppr.load("http://raw.githubusercontent.com/chilipeppr/widget-pubsubviewer/master/auto-generated-widget.html", function() {
+                require(['inline:com-chilipeppr-elem-pubsubviewer'], function(pubsubviewer) {
+                    pubsubviewer.attachTo($(topCssSelector + ' .panel-heading .dropdown-menu'), that);
+                });
+            });
+
+        },
+    };
+});
+    //]]>
+    </script>
+
+</head>
+
+<body>
+    
+    <div id="com-chilipeppr-widget-touchplate" class="panel panel-default">
+    <div class="panel-heading">
+        <div class="btn-toolbar pull-right" role="toolbar" >
+            
+            <!-- <div class="btn-group">
+                <button type="button" class="btn btn-xs btn-default lasersolder-on" data-delay="500" data-animation="true" data-placement="auto" data-container="body" data-trigger="hover" data-title="Turn Laser On" data-content="laser-on"><span class="glyphicon glyphicon-fire"></span><span style="margin-left:-2px;opacity:0.5;" class="glyphicon glyphicon-ok"></span></button>
+                <button type="button" class="btn btn-xs btn-default lasersolder-off" data-delay="500" data-animation="true" data-placement="auto" data-container="body" data-trigger="hover" data-title="Turn Laser Off" data-content="laser-off"><span style="opacity:0.5" class="glyphicon glyphicon-fire"></span></button>
+            </div> -->
+            <div class="btn-group">
+                <button type="button" class="btn btn-xs btn-default hidebody"><span class="glyphicon glyphicon-chevron-up"></span></button>
+            </div>
+            <div class="btn-group">
+                <div class="dropdown">
+                <button type="button" class="btn btn-xs btn-default dropdown-toggle" data-toggle="dropdown"><span class="caret"></span></button>
+                <ul class="dropdown-menu dropdown-menu-right" role="menu">
+                
+                </ul>
+                </div>
+            </div>
+        </div>
+        <span class="panel-title" data-toggle="popover">Touch Plate</span> <span style="font-size:9px;" class="fb-build"></span>
+    </div>
+    <div class="panel-body">
+        
+        <div class="settings-overlay">
+            
+            <div class="" style="text-align:left;margin-top:10px;">Depth To Probe <span style="font-size:0.7em;">(Should be negative)</span></div>
+            <div class="input-group">
+                <input class="form-control depthprobe" id="probe-depth" type="number" placeholder="0.00" value="-10" />
+                <div class="input-group-addon">mm</div>
+            </div>
+            
+            <div class="" style="text-align:left;margin-top:10px;">Feedrate to Probe</div>
+            <div class="input-group">
+                <input class="form-control frprobe" id="probe-speed" type="number" placeholder="0.00" value="25" />
+                <div class="input-group-addon">mm/min</div>
+            </div>
+            
+            <div class="" style="text-align:left;margin-top:10px;">Height of Plate</div>
+            <div class="input-group">
+                <input class="form-control heightplate" id="probe-offset" type="number" min="0" placeholder="0.00" value="3" />
+                <div class="input-group-addon">mm</div>
+            </div>
+
+            <button type="button" class="btn xbtn-xs btn-primary btn-touchplaterun" style="width:100%;margin-top:10px;">Run</button>
+        </div>
+        
+    </div>
+    <div class="panel-footer hidden">
+        <textarea id="com-chilipeppr-widget-touchplate-status" class="widget-status form-control" rows="3"></textarea>
+    </div>
+</div>
+<div id="test-serial-port"></div>
+<div id="test-tinyg"></div>
+<div id="test-console"></div>
+<div id="test-axes"></div>
+
+    
+</body>
+
+</html>
